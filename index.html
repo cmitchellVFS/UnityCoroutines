@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coroutines in Unity 6: Usage &amp; Best Practices</title>
+<style>
+  :root {
+    --bg: #ffffff; --ink: #1d1d1f; --quiet: #5f6368; --edge: #8a8f98; --rule: #e3e5e8;
+    --accent: #2f6fde; --accent-tint: rgba(47,111,222,0.12); --code-bg: #f5f6f8; --th-bg: #f2f4f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --ink: #e8e9eb; --quiet: #a3a7ad; --edge: #7d828a; --rule: #2e3136;
+      --accent: #6c9cf0; --accent-tint: rgba(108,156,240,0.16); --code-bg: #212327; --th-bg: #202226;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 48px 24px 96px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 1.45rem; margin: 48px 0 12px; padding-top: 8px; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.1rem; margin: 28px 0 8px; }
+  .byline { color: var(--quiet); font-size: 0.9rem; margin: 0 0 24px; }
+  p { margin: 0 0 14px; }
+  ul, ol { padding-left: 24px; margin: 0 0 16px; }
+  li { margin: 4px 0; }
+  li p { margin: 0; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.88em;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; margin: 0 0 18px; line-height: 1.45; }
+  pre code { background: none; padding: 0; font-size: 0.85rem; }
+  .table-wrap { overflow-x: auto; margin: 0 0 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { border: 1px solid var(--rule); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--th-bg); font-weight: 600; }
+  figure { margin: 8px 0 12px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--quiet); font-size: 0.85rem; text-align: center; margin-top: 6px; }
+  ul.checklist { list-style: none; padding-left: 4px; }
+  ul.checklist input { margin-right: 8px; }
+  nav.toc { background: var(--code-bg); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 18px; margin: 0 0 24px; font-size: 0.92rem; }
+  nav.toc ol { margin: 4px 0 0; }
+</style>
+</head>
+<body>
+<main>
+
+<h1 id="coroutines-in-unity-6-usage-best-practices">Coroutines in Unity 6: Usage &amp; Best Practices</h1>
+<p class="byline">Updated <time datetime="2026-11-06">2026-11-06</time></p>
+
+<p>Coroutines are still fully supported in Unity 6 and remain the simplest way to spread gameplay logic over frames. For new code that waits on I/O, returns a value, or needs try/catch, Unity 6's <code>Awaitable</code> is usually the better tool (see the last section).</p>
+
+<nav class="toc"><strong>Contents</strong>
+<ol>
+  <li><a href="#how-a-coroutine-works">How a coroutine works</a></li>
+  <li><a href="#starting-and-stopping">Starting and stopping</a></li>
+  <li><a href="#yield-instructions-reference">Yield instructions reference</a></li>
+  <li><a href="#common-patterns">Common patterns</a></li>
+  <li><a href="#best-practices">Best practices</a></li>
+  <li><a href="#pitfalls-and-gotchas">Pitfalls and gotchas</a></li>
+  <li><a href="#coroutines-vs-awaitable-in-unity-6">Coroutines vs Awaitable in Unity 6</a></li>
+  <li><a href="#quick-checklist">Quick checklist</a></li>
+</ol>
+</nav>
+
+<h2 id="how-a-coroutine-works">How a coroutine works</h2>
+<p>A coroutine is a method that returns <code>IEnumerator</code> and pauses at each <code>yield return</code>. Unity holds the paused method and resumes it later, at a point in the frame set by what you yielded.</p>
+<ul>
+  <li>It is <strong>not a thread</strong>. Everything runs on the main thread, so you can touch any Unity API inside it.</li>
+  <li>It is <strong>owned by the MonoBehaviour that started it</strong>. If that GameObject is deactivated or destroyed, the coroutine dies with it.</li>
+  <li>Each <code>yield return</code> is a checkpoint. Code between two yields runs in one go, within a single frame.</li>
+</ul>
+<pre><code class="language-csharp">using System.Collections;
+using UnityEngine;
+
+public class Blinker : MonoBehaviour
+{
+    [SerializeField] Renderer target;
+
+    IEnumerator Start()          // Start itself can be a coroutine
+    {
+        while (true)
+        {
+            target.enabled = !target.enabled;
+            yield return new WaitForSeconds(0.5f); // pause, resume ~0.5 s later
+        }
+    }
+}</code></pre>
+<p>Where in the frame a coroutine resumes depends on its yield:</p>
+
+<figure>
+<svg viewBox="0 0 760 528" role="img" aria-label="Each yield type resumes at a fixed point in the frame" font-size="13" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="frame-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" style="fill:var(--edge)"/>
+    </marker>
+  </defs>
+  <text x="24" y="34" font-size="15" font-weight="600" style="fill:var(--ink)">Each yield type resumes at a fixed point in the frame</text>
+  <g fill="none" style="stroke:var(--edge)" stroke-width="1.25">
+    <path d="M166 120V180" marker-end="url(#frame-arrow)"/>
+    <path d="M166 224V296" marker-end="url(#frame-arrow)"/>
+    <path d="M166 340V368" marker-end="url(#frame-arrow)"/>
+    <path d="M166 412V492H32V92H56" marker-end="url(#frame-arrow)"/>
+  </g>
+  <text x="44" y="512" font-size="11.5" style="fill:var(--quiet)">next frame</text>
+
+  <rect x="56" y="64" width="220" height="56" rx="8" fill="none" style="stroke:var(--edge)" stroke-width="1.25"/>
+  <text x="166" y="88" text-anchor="middle" font-weight="600" style="fill:var(--ink)">FixedUpdate + physics</text>
+  <text x="166" y="106" text-anchor="middle" font-size="11.5" style="fill:var(--quiet)">0 to n times per frame</text>
+
+  <rect x="56" y="180" width="220" height="44" rx="8" fill="none" style="stroke:var(--edge)" stroke-width="1.25"/>
+  <text x="166" y="206" text-anchor="middle" font-weight="600" style="fill:var(--ink)">Update</text>
+
+  <rect x="56" y="296" width="220" height="44" rx="8" fill="none" style="stroke:var(--edge)" stroke-width="1.25"/>
+  <text x="166" y="322" text-anchor="middle" font-weight="600" style="fill:var(--ink)">LateUpdate</text>
+
+  <rect x="56" y="368" width="220" height="44" rx="8" fill="none" style="stroke:var(--edge)" stroke-width="1.25"/>
+  <text x="166" y="394" text-anchor="middle" font-weight="600" style="fill:var(--ink)">Rendering</text>
+
+  <circle cx="166" cy="150" r="3.5" style="fill:var(--accent)"/>
+  <line x1="166" y1="150" x2="320" y2="150" style="stroke:var(--accent)" stroke-width="1.25" stroke-dasharray="4 4"/>
+  <rect x="320" y="122" width="416" height="56" rx="8" style="fill:var(--accent-tint);stroke:var(--accent)" stroke-width="2"/>
+  <text x="332" y="146" font-weight="600" style="fill:var(--ink)">After physics</text>
+  <text x="332" y="162" font-size="11.5" style="fill:var(--ink)">WaitForFixedUpdate (after OnCollision / OnTrigger)</text>
+
+  <circle cx="166" cy="260" r="3.5" style="fill:var(--accent)"/>
+  <line x1="166" y1="260" x2="320" y2="260" style="stroke:var(--accent)" stroke-width="1.25" stroke-dasharray="4 4"/>
+  <rect x="320" y="224" width="416" height="72" rx="8" style="fill:var(--accent-tint);stroke:var(--accent)" stroke-width="2"/>
+  <text x="332" y="248" font-weight="600" style="fill:var(--ink)">After Update (most yields land here)</text>
+  <text x="332" y="264" font-size="11.5" style="fill:var(--ink)">yield return null, WaitForSeconds, WaitForSecondsRealtime</text>
+  <text x="332" y="280" font-size="11.5" style="fill:var(--ink)">WaitUntil, WaitWhile, AsyncOperation, nested coroutines</text>
+
+  <circle cx="166" cy="448" r="3.5" style="fill:var(--accent)"/>
+  <line x1="166" y1="448" x2="320" y2="448" style="stroke:var(--accent)" stroke-width="1.25" stroke-dasharray="4 4"/>
+  <rect x="320" y="420" width="416" height="56" rx="8" style="fill:var(--accent-tint);stroke:var(--accent)" stroke-width="2"/>
+  <text x="332" y="444" font-weight="600" style="fill:var(--ink)">After rendering</text>
+  <text x="332" y="460" font-size="11.5" style="fill:var(--ink)">WaitForEndOfFrame (before the frame is displayed)</text>
+</svg>
+<figcaption>Unity player loop · where coroutines resume</figcaption>
+</figure>
+<p>Most yields resume right after <code>Update</code> and before <code>LateUpdate</code>, so a coroutine sees the same state your <code>Update</code> methods just produced.</p>
+
+<h2 id="starting-and-stopping">Starting and stopping</h2>
+<p>Always keep the <code>Coroutine</code> handle that <code>StartCoroutine</code> returns, and stop by handle. That is the only form that reliably stops exactly the run you started.</p>
+<pre><code class="language-csharp">Coroutine fadeRoutine;
+
+public void FadeIn()
+{
+    // Restart cleanly: stop any fade already running
+    if (fadeRoutine != null) StopCoroutine(fadeRoutine);
+    fadeRoutine = StartCoroutine(Fade(0f, 1f, 0.4f));
+}
+
+IEnumerator Fade(float from, float to, float duration)
+{
+    for (float t = 0; t &lt; duration; t += Time.deltaTime)
+    {
+        canvasGroup.alpha = Mathf.Lerp(from, to, t / duration);
+        yield return null;
+    }
+    canvasGroup.alpha = to;
+    fadeRoutine = null;          // mark as finished
+}</code></pre>
+<div class="table-wrap"><table>
+<thead><tr><th>Call</th><th>What it stops</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>StopCoroutine(Coroutine handle)</code></td><td>That one run</td><td>Preferred</td></tr>
+<tr><td><code>StopCoroutine(IEnumerator e)</code></td><td>The run using that exact enumerator instance</td><td>Calling <code>StopCoroutine(Fade())</code> creates a new instance and stops nothing</td></tr>
+<tr><td><code>StopCoroutine("Name")</code></td><td>Runs started with the string overload</td><td>Avoid: no compile-time checking, one parameter max</td></tr>
+<tr><td><code>StopAllCoroutines()</code></td><td>Every coroutine on this MonoBehaviour</td><td>Other components are unaffected</td></tr>
+</tbody></table></div>
+<p>What else ends a coroutine:</p>
+<ul>
+  <li>Deactivating the GameObject (<code>SetActive(false)</code>) or destroying it or the component.</li>
+  <li>An unhandled exception inside it; the error is logged and the coroutine stops.</li>
+  <li>Disabling the component (<code>enabled = false</code>) does <strong>not</strong> stop it.</li>
+  <li>You cannot start a coroutine on an inactive GameObject; Unity logs an error instead.</li>
+</ul>
+
+<h2 id="yield-instructions-reference">Yield instructions reference</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Yield</th><th>Resumes</th><th>Affected by <code>Time.timeScale</code></th><th>Use for</th></tr></thead>
+<tbody>
+<tr><td><code>yield return null</code></td><td>Next frame, after Update</td><td>No</td><td>Per-frame loops, lerps, "wait one frame"</td></tr>
+<tr><td><code>new WaitForSeconds(s)</code></td><td>First frame after <code>s</code> scaled seconds</td><td>Yes (freezes at 0)</td><td>Gameplay delays, cooldowns</td></tr>
+<tr><td><code>new WaitForSecondsRealtime(s)</code></td><td>First frame after <code>s</code> real seconds</td><td>No</td><td>Pause menus, UI while time is stopped</td></tr>
+<tr><td><code>new WaitForFixedUpdate()</code></td><td>After the next physics step</td><td>Yes</td><td>Applying forces in sync with physics</td></tr>
+<tr><td><code>new WaitForEndOfFrame()</code></td><td>After rendering, before display</td><td>No</td><td>Screenshots, reading the rendered frame</td></tr>
+<tr><td><code>new WaitUntil(() =&gt; cond)</code></td><td>First frame the predicate is true</td><td>No</td><td>Waiting on a flag or state</td></tr>
+<tr><td><code>new WaitWhile(() =&gt; cond)</code></td><td>First frame the predicate is false</td><td>No</td><td>Waiting for something to finish</td></tr>
+<tr><td><code>asyncOp</code> (e.g. <code>SceneManager.LoadSceneAsync</code>, <code>UnityWebRequest.SendWebRequest()</code>)</td><td>When the operation completes</td><td>No</td><td>Loading, web requests</td></tr>
+<tr><td><code>StartCoroutine(Other())</code> or <code>Other()</code></td><td>When the nested coroutine finishes</td><td>Depends on its yields</td><td>Building sequences from smaller steps</td></tr>
+<tr><td><code>Awaitable</code> (non-generic)</td><td>When it completes</td><td>Depends on the call</td><td>Mixing in Unity 6 async APIs</td></tr>
+</tbody></table></div>
+<p>All timed waits resume on the first frame <em>after</em> the time has passed, so they overshoot by up to one frame. Never <code>yield return 0</code> or any other number; it boxes an int and behaves exactly like <code>null</code>.</p>
+
+<h2 id="common-patterns">Common patterns</h2>
+<h3 id="timed-lerp-with-an-easing-curve">Timed lerp with an easing curve</h3>
+<pre><code class="language-csharp">IEnumerator MoveTo(Transform t, Vector3 target, float duration, AnimationCurve ease)
+{
+    Vector3 start = t.position;
+    float elapsed = 0f;
+    while (elapsed &lt; duration)
+    {
+        elapsed += Time.deltaTime;
+        t.position = Vector3.LerpUnclamped(start, target, ease.Evaluate(elapsed / duration));
+        yield return null;
+    }
+    t.position = target;   // snap to the exact end value
+}</code></pre>
+<h3 id="sequencing-steps">Sequencing steps</h3>
+<p>Yielding one coroutine from another waits for it to finish, which turns a cutscene or tutorial into readable top-to-bottom code.</p>
+<pre><code class="language-csharp">IEnumerator IntroSequence()
+{
+    yield return MoveTo(cam, shotA, 1.5f, easeInOut); // nested: waits until done
+    yield return dialogue.Show("Welcome, pilot.");
+    yield return new WaitUntil(() =&gt; playerConfirmed);
+    yield return Fade(1f, 0f, 0.5f);
+}</code></pre>
+<h3 id="running-steps-in-parallel-then-joining">Running steps in parallel, then joining</h3>
+<pre><code class="language-csharp">IEnumerator OpenGates()
+{
+    Coroutine left  = StartCoroutine(MoveTo(gateL, openL, 1f, ease));
+    Coroutine right = StartCoroutine(MoveTo(gateR, openR, 1f, ease));
+    yield return left;    // wait for both
+    yield return right;
+    audio.PlayOneShot(clunk);
+}</code></pre>
+<h3 id="low-frequency-polling-instead-of-update">Low-frequency polling instead of Update</h3>
+<p>Checks that do not need to run every frame (AI perception, spawn checks) can tick on a slower interval.</p>
+<pre><code class="language-csharp">readonly WaitForSeconds tick = new WaitForSeconds(0.25f);
+
+IEnumerator SenseLoop()
+{
+    while (true)
+    {
+        ScanForTargets();
+        yield return tick;   // 4 times per second, no allocation per loop
+    }
+}</code></pre>
+<h3 id="async-loading-with-progress">Async loading with progress</h3>
+<pre><code class="language-csharp">IEnumerator LoadLevel(string scene)
+{
+    AsyncOperation op = SceneManager.LoadSceneAsync(scene);
+    op.allowSceneActivation = false;
+    while (op.progress &lt; 0.9f)        // progress stops at 0.9 until activation
+    {
+        loadingBar.value = op.progress / 0.9f;
+        yield return null;
+    }
+    loadingBar.value = 1f;
+    op.allowSceneActivation = true;
+}</code></pre>
+
+<h2 id="best-practices">Best practices</h2>
+<ol>
+  <li><strong>Keep the handle, guard against double starts.</strong> Starting the same coroutine twice (two clicks, two triggers) runs two copies that fight over the same values. Stop the old handle before starting a new one, as in the fade example.</li>
+  <li><strong>Cache constant yield objects.</strong> <code>new WaitForSeconds(0.25f)</code> allocates each time; a <code>readonly</code> field reused in a loop does not. <code>yield return null</code> never allocates. Do not share <code>WaitUntil</code>/<code>WaitWhile</code> instances between coroutines running at the same time.</li>
+  <li><strong>Start coroutines on the object whose lifetime they belong to.</strong> <code>otherBehaviour.StartCoroutine(...)</code> ties the coroutine to that other object, so it keeps running after the caller is destroyed, or dies when the other object is disabled. A long-lived manager is fine for global work; per-object effects belong on the object.</li>
+  <li><strong>Use <code>Time.deltaTime</code> accumulation, not repeated short waits, for smooth motion.</strong> A loop of <code>WaitForSeconds(0.01f)</code> still runs at most once per frame and drifts. Accumulate elapsed time and <code>yield return null</code>.</li>
+  <li><strong>Pick scaled or unscaled time on purpose.</strong> Gameplay respects <code>Time.timeScale</code>; pause menus and UI need <code>WaitForSecondsRealtime</code> and <code>Time.unscaledDeltaTime</code>, or they freeze with the game.</li>
+  <li><strong>Snap to the final value after a lerp loop.</strong> The last frame rarely lands exactly on <code>t = 1</code>.</li>
+  <li><strong>Keep each coroutine small and named for what it does.</strong> Compose them with nested yields instead of writing one long state machine.</li>
+  <li><strong>Clean up on disable.</strong> Coroutines survive <code>enabled = false</code>, so stop them in <code>OnDisable</code> if the component should go quiet when disabled.</li>
+</ol>
+<pre><code class="language-csharp">void OnDisable()
+{
+    if (fadeRoutine != null) { StopCoroutine(fadeRoutine); fadeRoutine = null; }
+}</code></pre>
+
+<h2 id="pitfalls-and-gotchas">Pitfalls and gotchas</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td>Nothing happens</td><td>Called <code>Fade()</code> instead of <code>StartCoroutine(Fade())</code></td><td>Calling an iterator method only creates it; it never runs</td></tr>
+<tr><td>Coroutine never stops</td><td><code>StopCoroutine(Fade())</code> passes a new instance</td><td>Stop by the <code>Coroutine</code> handle</td></tr>
+<tr><td>Freezes forever in pause menu</td><td><code>WaitForSeconds</code> with <code>Time.timeScale = 0</code></td><td>Use <code>WaitForSecondsRealtime</code></td></tr>
+<tr><td>Unity hangs</td><td><code>while</code> loop with no <code>yield</code> inside</td><td>Every loop iteration needs a <code>yield return</code></td></tr>
+<tr><td>Two effects fighting</td><td>Same coroutine started twice</td><td>Stop the previous handle first</td></tr>
+<tr><td>Stops unexpectedly</td><td>GameObject deactivated, or an exception thrown inside</td><td>Check the Console; keep coroutines on objects that stay active</td></tr>
+<tr><td>Keeps running when "off"</td><td>Component disabled, not the GameObject</td><td>Stop it in <code>OnDisable</code></td></tr>
+<tr><td>Can't return a value</td><td><code>IEnumerator</code> has no result</td><td>Use a callback (<code>Action&lt;T&gt;</code>), a field, or <code>Awaitable&lt;T&gt;</code></td></tr>
+<tr><td>Can't wrap <code>yield</code> in <code>try/catch</code></td><td>C# forbids <code>yield return</code> inside a <code>try</code> with a <code>catch</code></td><td>Catch around the non-yield work, or use <code>Awaitable</code></td></tr>
+<tr><td><code>WaitForEndOfFrame</code> misbehaves in batch mode or some editor views</td><td>No rendering happens</td><td>Use it only for frame capture; otherwise <code>yield return null</code></td></tr>
+</tbody></table></div>
+
+<h2 id="coroutines-vs-awaitable-in-unity-6">Coroutines vs Awaitable in Unity 6</h2>
+<p>Unity 6 ships <code>Awaitable</code>, a pooled awaitable type for <code>async</code> methods with Unity-aware waits. A common rule of thumb: coroutines for frame-driven effects and sequences, <code>Awaitable</code> for I/O, loading, and anything that returns a value. Unity's manual says Awaitable is usually slightly more efficient than iterator coroutines, especially when the iterator yields non-null objects like <code>WaitForFixedUpdate</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Coroutine</th><th>Awaitable equivalent</th></tr></thead>
+<tbody>
+<tr><td><code>yield return null</code></td><td><code>await Awaitable.NextFrameAsync()</code></td></tr>
+<tr><td><code>yield return new WaitForSeconds(1f)</code></td><td><code>await Awaitable.WaitForSecondsAsync(1f)</code></td></tr>
+<tr><td><code>yield return new WaitForFixedUpdate()</code></td><td><code>await Awaitable.FixedUpdateAsync()</code></td></tr>
+<tr><td><code>yield return new WaitForEndOfFrame()</code></td><td><code>await Awaitable.EndOfFrameAsync()</code></td></tr>
+<tr><td><code>yield return asyncOp</code></td><td><code>await asyncOp</code> or <code>await Awaitable.FromAsyncOperation(op)</code></td></tr>
+<tr><td>(no equivalent)</td><td><code>await Awaitable.BackgroundThreadAsync()</code> / <code>MainThreadAsync()</code></td></tr>
+</tbody></table></div>
+<pre><code class="language-csharp">async Awaitable ShowAfterDelayAsync()
+{
+    try
+    {
+        await Awaitable.WaitForSecondsAsync(1f, destroyCancellationToken);
+        panel.SetActive(true);
+    }
+    catch (OperationCanceledException) { /* object was destroyed */ }
+}</code></pre>
+<p>What changes when you switch:</p>
+<ul>
+  <li><strong>Lifetime is not automatic.</strong> An <code>async</code> method keeps running after its GameObject is destroyed. Pass <code>destroyCancellationToken</code> to waits, and use <code>Application.exitCancellationToken</code> for work that must stop when leaving Play mode.</li>
+  <li><strong>Never await the same Awaitable twice.</strong> Instances are pooled and reused, so a second await is undefined behaviour.</li>
+  <li><strong>You gain</strong> return values (<code>Awaitable&lt;T&gt;</code>), normal <code>try/catch</code>, and explicit thread switching for heavy work.</li>
+  <li><strong>Interop:</strong> a coroutine can <code>yield return</code> a non-generic <code>Awaitable</code>, but not an <code>Awaitable&lt;T&gt;</code>.</li>
+</ul>
+<div class="table-wrap"><table>
+<thead><tr><th>Choose a coroutine when</th><th>Choose Awaitable when</th></tr></thead>
+<tbody>
+<tr><td>Visual effects, tweens, cutscene sequences</td><td>Loading assets, scenes, web requests</td></tr>
+<tr><td>It should die automatically with the GameObject</td><td>You need a return value or exception handling</td></tr>
+<tr><td>Existing codebase or students already use them</td><td>You want to offload work to a background thread</td></tr>
+</tbody></table></div>
+
+<h2 id="quick-checklist">Quick checklist</h2>
+<ul class="checklist">
+  <li><label><input type="checkbox"> Started with <code>StartCoroutine</code>, handle stored in a field</label></li>
+  <li><label><input type="checkbox"> Old handle stopped before restarting</label></li>
+  <li><label><input type="checkbox"> Every loop contains a <code>yield return</code></label></li>
+  <li><label><input type="checkbox"> Constant <code>WaitForSeconds</code> objects cached</label></li>
+  <li><label><input type="checkbox"> Scaled vs unscaled time chosen deliberately</label></li>
+  <li><label><input type="checkbox"> Final value snapped after lerp loops</label></li>
+  <li><label><input type="checkbox"> Stopped in <code>OnDisable</code> if the component should go quiet</label></li>
+  <li><label><input type="checkbox"> Started on the object whose lifetime it shares</label></li>
+  <li><label><input type="checkbox"> Considered <code>Awaitable</code> for loading, I/O, or return values</label></li>
+</ul>
+
+<h2 id="sources">Sources</h2>
+<ul>
+  <li><a href="https://docs.unity3d.com/6000.5/Documentation/Manual/async-awaitable-introduction.html">Unity Manual: Introduction to asynchronous programming with Awaitable</a></li>
+  <li><a href="https://docs-alpha.unity3d.com/Manual/async-await-support.html">Unity Manual: Asynchronous programming (Unity 6)</a></li>
+  <li><a href="https://docs.unity3d.com/6000.6/Documentation/Manual/async-awaitable-introduction.html">Unity Manual: Awaitable vs iterator-based coroutines</a></li>
+</ul>
+
+</main>
+</body>
+</html>
